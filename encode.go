@@ -19,6 +19,7 @@ type generator interface {
 type Encoder struct {
 	writer    io.Writer
 	generator generator
+	uidx      int
 }
 
 // Encode writes the property list encoding of v to the connection.

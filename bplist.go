@@ -39,10 +39,11 @@ const (
 type bplistGenerator struct {
 	writer   *countedWriter
 	uniqmap  map[interface{}]uint64
-	objmap   map[*plistValue]uint64
+	objmap   map[int]uint64
 	objtable []*plistValue
 	nobjects uint64
 	trailer  bplistTrailer
+	uidx     int
 }
 
 func (p *bplistGenerator) flattenPlistValue(pval *plistValue) {
@@ -66,7 +67,7 @@ func (p *bplistGenerator) flattenPlistValue(pval *plistValue) {
 	}
 
 	p.objtable = append(p.objtable, pval)
-	p.objmap[pval] = p.nobjects
+	p.objmap[pval.uidx] = p.nobjects
 	p.nobjects++
 
 	switch pval.kind {
@@ -74,7 +75,8 @@ func (p *bplistGenerator) flattenPlistValue(pval *plistValue) {
 		dict := pval.value.(*dictionary)
 		dict.populateArrays()
 		for _, k := range dict.keys {
-			p.flattenPlistValue(&plistValue{String, k})
+			p.uidx--
+			p.flattenPlistValue(&plistValue{String, k, p.uidx})
 		}
 		for _, v := range dict.values {
 			p.flattenPlistValue(v)
@@ -96,15 +98,15 @@ func (p *bplistGenerator) indexForPlistValue(pval *plistValue) (uint64, bool) {
 	case Data:
 		v, ok = p.uniqmap[crc32.ChecksumIEEE(pval.value.([]byte))]
 	default:
-		v, ok = p.objmap[pval]
+		v, ok = p.objmap[pval.uidx]
 	}
 	return v, ok
 }
 
 func (p *bplistGenerator) generateDocument(rootpval *plistValue) {
-	p.objtable = make([]*plistValue, 0, 15)
+	p.objtable = make([]*plistValue, 0, 100)
 	p.uniqmap = make(map[interface{}]uint64)
-	p.objmap = make(map[*plistValue]uint64)
+	p.objmap = make(map[int]uint64)
 	p.flattenPlistValue(rootpval)
 
 	p.trailer.NumObjects = uint64(len(p.objtable))
@@ -119,7 +121,7 @@ func (p *bplistGenerator) generateDocument(rootpval *plistValue) {
 	}
 
 	p.trailer.OffsetIntSize = uint8(minimumSizeForInt(uint64(p.writer.BytesWritten())))
-	p.trailer.TopObject = p.objmap[rootpval]
+	p.trailer.TopObject = p.objmap[rootpval.uidx]
 	p.trailer.OffsetTableOffset = uint64(p.writer.BytesWritten())
 
 	for _, offset := range offtable {
@@ -354,6 +356,7 @@ type bplistParser struct {
 	objrefs  map[uint64]*plistValue
 	offtable []uint64
 	trailer  bplistTrailer
+	uidx     int
 }
 
 func (p *bplistParser) parseDocument() *plistValue {
@@ -442,6 +445,8 @@ func (p *bplistParser) valueAtOffset(off uint64) *plistValue {
 }
 
 func (p *bplistParser) parseTagAtOffset(off int64) *plistValue {
+	uidx := p.uidx
+	p.uidx++
 	var tag uint8
 	p.reader.Seek(off, 0)
 	binary.Read(p.reader, binary.BigEndian, &tag)
@@ -450,22 +455,22 @@ func (p *bplistParser) parseTagAtOffset(off int64) *plistValue {
 	case bpTagNull:
 		switch tag & 0x0F {
 		case bpTagBoolTrue, bpTagBoolFalse:
-			return &plistValue{Boolean, tag == bpTagBoolTrue}
+			return &plistValue{Boolean, tag == bpTagBoolTrue, uidx}
 		}
 	case bpTagInteger:
 		val := p.readSizedInt(1 << (tag & 0xF))
-		return &plistValue{Integer, val}
+		return &plistValue{Integer, val, uidx}
 	case bpTagReal:
 		nbytes := 1 << (tag & 0x0F)
 		switch nbytes {
 		case 4:
 			var val float32
 			binary.Read(p.reader, binary.BigEndian, &val)
-			return &plistValue{Real, sizedFloat{float64(val), 32}}
+			return &plistValue{Real, sizedFloat{float64(val), 32}, uidx}
 		case 8:
 			var val float64
 			binary.Read(p.reader, binary.BigEndian, &val)
-			return &plistValue{Real, sizedFloat{float64(val), 64}}
+			return &plistValue{Real, sizedFloat{float64(val), 64}, uidx}
 		}
 		panic(errors.New("illegal float size"))
 	case bpTagDate:
@@ -478,25 +483,25 @@ func (p *bplistParser) parseTagAtOffset(off int64) *plistValue {
 
 		sec, fsec := math.Modf(val)
 		time := time.Unix(int64(sec), int64(fsec*float64(time.Second))).In(time.UTC)
-		return &plistValue{Date, time}
+		return &plistValue{Date, time, uidx}
 	case bpTagData:
 		cnt := p.countForTag(tag)
 
 		bytes := make([]byte, cnt)
 		binary.Read(p.reader, binary.BigEndian, bytes)
-		return &plistValue{Data, bytes}
+		return &plistValue{Data, bytes, uidx}
 	case bpTagASCIIString, bpTagUTF16String:
 		cnt := p.countForTag(tag)
 
 		if tag&0xF0 == bpTagASCIIString {
 			bytes := make([]byte, cnt)
 			binary.Read(p.reader, binary.BigEndian, bytes)
-			return &plistValue{String, string(bytes)}
+			return &plistValue{String, string(bytes), uidx}
 		} else {
 			bytes := make([]uint16, cnt)
 			binary.Read(p.reader, binary.BigEndian, bytes)
 			runes := utf16.Decode(bytes)
-			return &plistValue{String, string(runes)}
+			return &plistValue{String, string(runes), uidx}
 		}
 	case bpTagDictionary:
 		cnt := p.countForTag(tag)
@@ -512,7 +517,7 @@ func (p *bplistParser) parseTagAtOffset(off int64) *plistValue {
 			subvalues[kval.value.(string)] = p.valueAtOffset(p.offtable[indices[i+cnt]])
 		}
 
-		return &plistValue{Dictionary, &dictionary{m: subvalues}}
+		return &plistValue{Dictionary, &dictionary{m: subvalues}, uidx}
 	case bpTagArray:
 		cnt := p.countForTag(tag)
 
@@ -525,7 +530,7 @@ func (p *bplistParser) parseTagAtOffset(off int64) *plistValue {
 			arr[i] = p.valueAtOffset(p.offtable[indices[i]])
 		}
 
-		return &plistValue{Array, arr}
+		return &plistValue{Array, arr, uidx}
 	}
 	return nil
 }

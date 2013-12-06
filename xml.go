@@ -116,6 +116,7 @@ func newXMLPlistGenerator(w io.Writer) *xmlPlistGenerator {
 type xmlPlistParser struct {
 	reader     io.Reader
 	xmlDecoder *xml.Decoder
+	uidx int
 }
 
 func (p *xmlPlistParser) parseDocument() *plistValue {
@@ -131,6 +132,8 @@ func (p *xmlPlistParser) parseDocument() *plistValue {
 }
 
 func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
+	uidx := p.uidx
+	p.uidx++
 	var charData xml.CharData
 	switch element.Name.Local {
 	case "plist":
@@ -154,7 +157,7 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 			panic(err)
 		}
 
-		return &plistValue{String, string(charData)}
+		return &plistValue{String, string(charData), uidx}
 	case "integer":
 		err := p.xmlDecoder.DecodeElement(&charData, &element)
 		if err != nil {
@@ -166,7 +169,7 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 			panic(err)
 		}
 
-		return &plistValue{Integer, n}
+		return &plistValue{Integer, n, uidx}
 	case "real":
 		err := p.xmlDecoder.DecodeElement(&charData, &element)
 		if err != nil {
@@ -178,12 +181,12 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 			panic(err)
 		}
 
-		return &plistValue{Real, sizedFloat{n, 64}}
+		return &plistValue{Real, sizedFloat{n, 64}, uidx}
 	case "true", "false":
 		p.xmlDecoder.Skip()
 
 		b := element.Name.Local == "true"
-		return &plistValue{Boolean, b}
+		return &plistValue{Boolean, b, uidx}
 	case "date":
 		err := p.xmlDecoder.DecodeElement(&charData, &element)
 		if err != nil {
@@ -195,7 +198,7 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 			panic(err)
 		}
 
-		return &plistValue{Date, t}
+		return &plistValue{Date, t, uidx}
 	case "data":
 		err := p.xmlDecoder.DecodeElement(&charData, &element)
 		if err != nil {
@@ -209,7 +212,7 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 			panic(err)
 		}
 
-		return &plistValue{Data, bytes[:l]}
+		return &plistValue{Data, bytes[:l], uidx}
 	case "dict":
 		var key string
 		var subvalues map[string]*plistValue = make(map[string]*plistValue)
@@ -234,7 +237,7 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 				}
 			}
 		}
-		return &plistValue{Dictionary, &dictionary{m: subvalues}}
+		return &plistValue{Dictionary, &dictionary{m: subvalues}, uidx}
 	case "array":
 		var subvalues []*plistValue = make([]*plistValue, 0, 10)
 		for {
@@ -251,7 +254,7 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 				subvalues = append(subvalues, p.parseXMLElement(el))
 			}
 		}
-		return &plistValue{Array, subvalues}
+		return &plistValue{Array, subvalues, uidx}
 	default:
 		panic(fmt.Errorf("encountered unknown element %s in XML", element.Name.Local))
 	}
@@ -259,5 +262,5 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 }
 
 func newXMLPlistParser(r io.Reader) *xmlPlistParser {
-	return &xmlPlistParser{r, xml.NewDecoder(r)}
+	return &xmlPlistParser{r, xml.NewDecoder(r), 0}
 }

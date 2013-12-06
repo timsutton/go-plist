@@ -34,10 +34,11 @@ func (p *Encoder) marshalTextInterface(marshalable encoding.TextMarshaler) *plis
 	if err != nil {
 		panic(err)
 	}
-	return &plistValue{String, string(s)}
+	return &plistValue{String, string(s), p.uidx}
 }
 
 func (p *Encoder) marshalStruct(typ reflect.Type, val reflect.Value) *plistValue {
+	uidx := p.uidx
 	tinfo, _ := getTypeInfo(typ)
 
 	dict := &dictionary{
@@ -51,15 +52,17 @@ func (p *Encoder) marshalStruct(typ reflect.Type, val reflect.Value) *plistValue
 		dict.m[finfo.name] = p.marshal(value)
 	}
 
-	return &plistValue{Dictionary, dict}
+	return &plistValue{Dictionary, dict, uidx}
 }
 
 func (p *Encoder) marshalTime(val reflect.Value) *plistValue {
 	time := val.Interface().(time.Time)
-	return &plistValue{Date, time}
+	return &plistValue{Date, time, p.uidx}
 }
 
 func (p *Encoder) marshal(val reflect.Value) *plistValue {
+	p.uidx++
+
 	if !val.IsValid() {
 		return nil
 	}
@@ -104,15 +107,15 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 
 	switch val.Kind() {
 	case reflect.String:
-		return &plistValue{String, val.String()}
+		return &plistValue{String, val.String(), p.uidx}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return &plistValue{Integer, uint64(val.Int())}
+		return &plistValue{Integer, uint64(val.Int()), p.uidx}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return &plistValue{Integer, uint64(val.Uint())}
+		return &plistValue{Integer, uint64(val.Uint()), p.uidx}
 	case reflect.Float32, reflect.Float64:
-		return &plistValue{Real, sizedFloat{val.Float(), val.Type().Bits()}}
+		return &plistValue{Real, sizedFloat{val.Float(), val.Type().Bits()}, p.uidx}
 	case reflect.Bool:
-		return &plistValue{Boolean, val.Bool()}
+		return &plistValue{Boolean, val.Bool(), p.uidx}
 	case reflect.Slice, reflect.Array:
 		if typ.Elem().Kind() == reflect.Uint8 {
 			bytes := []byte(nil)
@@ -122,21 +125,23 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 				bytes = make([]byte, val.Len())
 				reflect.Copy(reflect.ValueOf(bytes), val)
 			}
-			return &plistValue{Data, bytes}
+			return &plistValue{Data, bytes, p.uidx}
 		} else {
+			uidx := p.uidx
 			subvalues := make([]*plistValue, val.Len())
 			for idx, length := 0, val.Len(); idx < length; idx++ {
 				if subpval := p.marshal(val.Index(idx)); subpval != nil {
 					subvalues[idx] = subpval
 				}
 			}
-			return &plistValue{Array, subvalues}
+			return &plistValue{Array, subvalues, uidx}
 		}
 	case reflect.Map:
 		if typ.Key().Kind() != reflect.String {
 			panic(&unknownTypeError{typ})
 		}
 
+		uidx := p.uidx
 		l := val.Len()
 		dict := &dictionary{
 			m: make(map[string]*plistValue, l),
@@ -146,7 +151,7 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 				dict.m[keyv.String()] = subpval
 			}
 		}
-		return &plistValue{Dictionary, dict}
+		return &plistValue{Dictionary, dict, uidx}
 	default:
 		panic(&unknownTypeError{typ})
 	}

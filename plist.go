@@ -34,6 +34,7 @@ var plistKindNames map[plistKind]string = map[plistKind]string{
 type plistValue struct {
 	kind  plistKind
 	value interface{}
+	uidx  int
 }
 
 type sizedFloat struct {
