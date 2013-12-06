@@ -44,9 +44,9 @@ type sizedFloat struct {
 
 type dictionary struct {
 	count  int
-	m      map[string]*plistValue
+	m      map[string]plistValue
 	keys   sort.StringSlice
-	values []*plistValue
+	values []plistValue
 }
 
 func (d *dictionary) Len() int {
@@ -70,7 +70,7 @@ func (d *dictionary) populateArrays() {
 	l := len(d.m)
 	d.count = l
 	d.keys = make([]string, l)
-	d.values = make([]*plistValue, l)
+	d.values = make([]plistValue, l)
 	i := 0
 	for k, v := range d.m {
 		d.keys[i] = k

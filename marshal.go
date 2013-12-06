@@ -29,20 +29,20 @@ var (
 	timeType          = reflect.TypeOf((*time.Time)(nil)).Elem()
 )
 
-func (p *Encoder) marshalTextInterface(marshalable encoding.TextMarshaler) *plistValue {
+func (p *Encoder) marshalTextInterface(marshalable encoding.TextMarshaler) plistValue {
 	s, err := marshalable.MarshalText()
 	if err != nil {
 		panic(err)
 	}
-	return &plistValue{String, string(s), p.uidx}
+	return plistValue{String, string(s), p.uidx}
 }
 
-func (p *Encoder) marshalStruct(typ reflect.Type, val reflect.Value) *plistValue {
+func (p *Encoder) marshalStruct(typ reflect.Type, val reflect.Value) plistValue {
 	uidx := p.uidx
 	tinfo, _ := getTypeInfo(typ)
 
 	dict := &dictionary{
-		m: make(map[string]*plistValue, len(tinfo.fields)),
+		m: make(map[string]plistValue, len(tinfo.fields)),
 	}
 	for _, finfo := range tinfo.fields {
 		value := finfo.value(val)
@@ -52,19 +52,19 @@ func (p *Encoder) marshalStruct(typ reflect.Type, val reflect.Value) *plistValue
 		dict.m[finfo.name] = p.marshal(value)
 	}
 
-	return &plistValue{Dictionary, dict, uidx}
+	return plistValue{Dictionary, dict, uidx}
 }
 
-func (p *Encoder) marshalTime(val reflect.Value) *plistValue {
+func (p *Encoder) marshalTime(val reflect.Value) plistValue {
 	time := val.Interface().(time.Time)
-	return &plistValue{Date, time, p.uidx}
+	return plistValue{Date, time, p.uidx}
 }
 
-func (p *Encoder) marshal(val reflect.Value) *plistValue {
+func (p *Encoder) marshal(val reflect.Value) plistValue {
 	p.uidx++
 
 	if !val.IsValid() {
-		return nil
+		return plistValue{}
 	}
 
 	// time.Time implements TextMarshaler, but we need to store it in RFC3339
@@ -96,7 +96,7 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 
 	// We got this far and still may have an invalid anything or nil ptr/interface
 	if !val.IsValid() || ((val.Kind() == reflect.Ptr || val.Kind() == reflect.Interface) && val.IsNil()) {
-		return nil
+		return plistValue{}
 	}
 
 	typ := val.Type()
@@ -107,15 +107,15 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 
 	switch val.Kind() {
 	case reflect.String:
-		return &plistValue{String, val.String(), p.uidx}
+		return plistValue{String, val.String(), p.uidx}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return &plistValue{Integer, uint64(val.Int()), p.uidx}
+		return plistValue{Integer, uint64(val.Int()), p.uidx}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return &plistValue{Integer, uint64(val.Uint()), p.uidx}
+		return plistValue{Integer, uint64(val.Uint()), p.uidx}
 	case reflect.Float32, reflect.Float64:
-		return &plistValue{Real, sizedFloat{val.Float(), val.Type().Bits()}, p.uidx}
+		return plistValue{Real, sizedFloat{val.Float(), val.Type().Bits()}, p.uidx}
 	case reflect.Bool:
-		return &plistValue{Boolean, val.Bool(), p.uidx}
+		return plistValue{Boolean, val.Bool(), p.uidx}
 	case reflect.Slice, reflect.Array:
 		if typ.Elem().Kind() == reflect.Uint8 {
 			bytes := []byte(nil)
@@ -125,16 +125,16 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 				bytes = make([]byte, val.Len())
 				reflect.Copy(reflect.ValueOf(bytes), val)
 			}
-			return &plistValue{Data, bytes, p.uidx}
+			return plistValue{Data, bytes, p.uidx}
 		} else {
 			uidx := p.uidx
-			subvalues := make([]*plistValue, val.Len())
+			subvalues := make([]plistValue, val.Len())
 			for idx, length := 0, val.Len(); idx < length; idx++ {
-				if subpval := p.marshal(val.Index(idx)); subpval != nil {
+				if subpval := p.marshal(val.Index(idx)); subpval.kind != Invalid {
 					subvalues[idx] = subpval
 				}
 			}
-			return &plistValue{Array, subvalues, uidx}
+			return plistValue{Array, subvalues, uidx}
 		}
 	case reflect.Map:
 		if typ.Key().Kind() != reflect.String {
@@ -144,16 +144,16 @@ func (p *Encoder) marshal(val reflect.Value) *plistValue {
 		uidx := p.uidx
 		l := val.Len()
 		dict := &dictionary{
-			m: make(map[string]*plistValue, l),
+			m: make(map[string]plistValue, l),
 		}
 		for _, keyv := range val.MapKeys() {
-			if subpval := p.marshal(val.MapIndex(keyv)); subpval != nil {
+			if subpval := p.marshal(val.MapIndex(keyv)); subpval.kind != Invalid {
 				dict.m[keyv.String()] = subpval
 			}
 		}
-		return &plistValue{Dictionary, dict, uidx}
+		return plistValue{Dictionary, dict, uidx}
 	default:
 		panic(&unknownTypeError{typ})
 	}
-	return nil
+	return plistValue{}
 }

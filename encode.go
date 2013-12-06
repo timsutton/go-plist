@@ -12,7 +12,7 @@ import (
 )
 
 type generator interface {
-	generateDocument(*plistValue)
+	generateDocument(plistValue)
 }
 
 // An Encoder writes a property list to an output stream.
@@ -64,7 +64,7 @@ func (p *Encoder) Encode(v interface{}) (err error) {
 	}()
 
 	pval := p.marshal(reflect.ValueOf(v))
-	if pval == nil {
+	if pval.kind == Invalid {
 		panic(errors.New("no root element to encode"))
 	}
 

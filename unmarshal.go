@@ -24,19 +24,19 @@ func isEmptyInterface(v reflect.Value) bool {
 	return v.Kind() == reflect.Interface && v.NumMethod() == 0
 }
 
-func (p *Decoder) unmarshalTextInterface(pval *plistValue, unmarshalable encoding.TextUnmarshaler) {
+func (p *Decoder) unmarshalTextInterface(pval plistValue, unmarshalable encoding.TextUnmarshaler) {
 	err := unmarshalable.UnmarshalText([]byte(pval.value.(string)))
 	if err != nil {
 		panic(err)
 	}
 }
 
-func (p *Decoder) unmarshalTime(pval *plistValue, val reflect.Value) {
+func (p *Decoder) unmarshalTime(pval plistValue, val reflect.Value) {
 	val.Set(reflect.ValueOf(pval.value.(time.Time)))
 }
 
-func (p *Decoder) unmarshal(pval *plistValue, val reflect.Value) {
-	if pval == nil {
+func (p *Decoder) unmarshal(pval plistValue, val reflect.Value) {
+	if pval.kind == Invalid {
 		return
 	}
 
@@ -120,8 +120,8 @@ func (p *Decoder) unmarshal(pval *plistValue, val reflect.Value) {
 	}
 }
 
-func (p *Decoder) unmarshalArray(pval *plistValue, val reflect.Value) error {
-	subvalues := pval.value.([]*plistValue)
+func (p *Decoder) unmarshalArray(pval plistValue, val reflect.Value) error {
+	subvalues := pval.value.([]plistValue)
 
 	var n int
 	if val.Kind() == reflect.Slice {
@@ -155,7 +155,7 @@ func (p *Decoder) unmarshalArray(pval *plistValue, val reflect.Value) error {
 	return nil
 }
 
-func (p *Decoder) unmarshalDictionary(pval *plistValue, val reflect.Value) error {
+func (p *Decoder) unmarshalDictionary(pval plistValue, val reflect.Value) error {
 	typ := val.Type()
 	switch val.Kind() {
 	case reflect.Struct:
@@ -192,7 +192,7 @@ func (p *Decoder) unmarshalDictionary(pval *plistValue, val reflect.Value) error
 }
 
 /* *Interface is modelled after encoding/json */
-func (p *Decoder) valueInterface(pval *plistValue) interface{} {
+func (p *Decoder) valueInterface(pval plistValue) interface{} {
 	switch pval.kind {
 	case String:
 		return pval.value.(string)
@@ -209,7 +209,7 @@ func (p *Decoder) valueInterface(pval *plistValue) interface{} {
 	case Boolean:
 		return pval.value.(bool)
 	case Array:
-		return p.arrayInterface(pval.value.([]*plistValue))
+		return p.arrayInterface(pval.value.([]plistValue))
 	case Dictionary:
 		return p.dictionaryInterface(pval.value.(*dictionary))
 	case Data:
@@ -220,7 +220,7 @@ func (p *Decoder) valueInterface(pval *plistValue) interface{} {
 	return nil
 }
 
-func (p *Decoder) arrayInterface(subvalues []*plistValue) []interface{} {
+func (p *Decoder) arrayInterface(subvalues []plistValue) []interface{} {
 	out := make([]interface{}, len(subvalues))
 	for i, subv := range subvalues {
 		out[i] = p.valueInterface(subv)
