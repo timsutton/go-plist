@@ -3,7 +3,6 @@ package plist
 import (
 	"encoding/hex"
 	_ "errors"
-	"fmt"
 	"io"
 	_ "math"
 	"strconv"
@@ -22,6 +21,49 @@ func (p *textPlistGenerator) generateDocument(pval *plistValue) {
 	p.writePlistValue(pval)
 }
 
+func plistQuotedString(str string) string {
+	s := ""
+	quot := false
+	for _, r := range str {
+		if r > 0xFF {
+			quot = true
+			s += `\U`
+			s += strconv.FormatInt(int64(r), 16)
+		} else if r > 0x7F {
+			quot = true
+			s += `\`
+			s += strconv.FormatInt(int64(r), 8)
+		} else {
+			if quoteRequired(uint8(r)) {
+				quot = true
+			}
+
+			switch uint8(r) {
+			case '\a':
+				s += `\a`
+			case '\b':
+				s += `\b`
+			case '\v':
+				s += `\v`
+			case '\f':
+				s += `\f`
+			case '\\':
+				s += `\\`
+			case '"':
+				s += `\"`
+			case '\t', '\r', '\n':
+				fallthrough
+			default:
+				s += string(r)
+			}
+		}
+	}
+	if quot {
+		s = `"` + s + `"`
+	}
+	return s
+}
+
 func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 	if pval == nil {
 		return
@@ -33,7 +75,7 @@ func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 		dict := pval.value.(*dictionary)
 		dict.populateArrays()
 		for i, k := range dict.keys {
-			fmt.Fprintf(p.writer, `%s=`, strconv.QuoteToASCII(k))
+			io.WriteString(p.writer, plistQuotedString(k)+`=`)
 			p.writePlistValue(dict.values[i])
 			p.writer.Write([]byte(`;`))
 		}
@@ -41,21 +83,17 @@ func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 	case Array:
 		p.writer.Write([]byte(`(`))
 		values := pval.value.([]*plistValue)
-		for i, v := range values {
+		for _, v := range values {
 			p.writePlistValue(v)
-			if i < len(values)-1 {
-				fmt.Fprintf(p.writer, ",")
-			}
+			p.writer.Write([]byte(`,`))
 		}
 		p.writer.Write([]byte(`)`))
 	case String:
-		fmt.Fprintf(p.writer, `%s`, strconv.QuoteToASCII(pval.value.(string)))
+		io.WriteString(p.writer, plistQuotedString(pval.value.(string)))
 	case Integer:
-		//fmt.Fprintf(p.writer, `"%v"`, pval.value)
-		fmt.Fprintf(p.writer, `<*I%v>`, pval.value)
+		io.WriteString(p.writer, strconv.FormatUint(pval.value.(uint64), 10))
 	case Real:
-		//fmt.Fprintf(p.writer, `"%v"`, pval.value.(sizedFloat).value)
-		fmt.Fprintf(p.writer, `<*R%v>`, pval.value.(sizedFloat).value)
+		io.WriteString(p.writer, strconv.FormatFloat(pval.value.(sizedFloat).value, 'g', -1, 64))
 	case Boolean:
 		b := pval.value.(bool)
 		if b {
@@ -67,8 +105,8 @@ func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 		b := pval.value.([]byte)
 		hexencoded := make([]byte, hex.EncodedLen(len(b)))
 		hex.Encode(hexencoded, b)
-		fmt.Fprintf(p.writer, `<%s>`, string(hexencoded))
+		io.WriteString(p.writer, `<`+string(hexencoded)+`>`)
 	case Date:
-		fmt.Fprintf(p.writer, `<*D%v>`, pval.value.(time.Time).In(time.UTC).Format(textPlistTimeLayout))
+		io.WriteString(p.writer, pval.value.(time.Time).In(time.UTC).Format(textPlistTimeLayout))
 	}
 }
