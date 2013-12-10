@@ -97,9 +97,9 @@ func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 	case Boolean:
 		b := pval.value.(bool)
 		if b {
-			p.writer.Write([]byte(`<*BY>`))
+			p.writer.Write([]byte(`1`))
 		} else {
-			p.writer.Write([]byte(`<*BN>`))
+			p.writer.Write([]byte(`0`))
 		}
 	case Data:
 		b := pval.value.([]byte)
