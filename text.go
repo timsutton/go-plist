@@ -169,22 +169,22 @@ func (p *textPlistParser) parseQuotedString() *plistValue {
 		} else {
 			escaping = false
 			// Everything that is not listed here passes through unharmed.
-			switch {
-			case c == 'a':
+			switch c {
+			case 'a':
 				c = '\a'
-			case c == 'b':
+			case 'b':
 				c = '\b'
-			case c == 'v':
+			case 'v':
 				c = '\v'
-			case c == 'f':
+			case 'f':
 				c = '\f'
-			case c == 't':
+			case 't':
 				c = '\t'
-			case c == 'r':
+			case 'r':
 				c = '\r'
-			case c == 'n':
+			case 'n':
 				c = '\n'
-			case c == 'x', c == 'u', c == 'U': // hex and unicode
+			case 'x', 'u', 'U': // hex and unicode
 				l := 4
 				if c == 'x' {
 					l = 2
@@ -196,7 +196,7 @@ func (p *textPlistParser) parseQuotedString() *plistValue {
 					panic(err)
 				}
 				c = rune(newc)
-			case '0' <= c && c <= '7': // octal!
+			case '0', '1', '2', '3', '4', '5', '6', '7': // octal!
 				oct := make([]byte, 3)
 				oct[0] = uint8(c)
 				p.reader.Read(oct[1:])
@@ -312,8 +312,8 @@ func (p *textPlistParser) parsePlistValue() *plistValue {
 		if err != nil && err != io.EOF {
 			panic(err)
 		}
-		switch {
-		case c == '<':
+		switch c {
+		case '<':
 			bytes, err := p.reader.ReadBytes('>')
 			if err != nil {
 				panic(err)
@@ -324,11 +324,11 @@ func (p *textPlistParser) parsePlistValue() *plistValue {
 				panic(err)
 			}
 			return &plistValue{Data, data}
-		case c == '"':
+		case '"':
 			return p.parseQuotedString()
-		case c == '{':
+		case '{':
 			return p.parseDictionary()
-		case c == '(':
+		case '(':
 			return p.parseArray()
 		default:
 			p.reader.UnreadByte() // Place back in buffer for parseUnquotedString
