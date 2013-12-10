@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 )
-import "fmt"
 
 type textPlistGenerator struct {
 	writer io.Writer
@@ -16,6 +15,7 @@ type textPlistGenerator struct {
 
 var (
 	textPlistTimeLayout = "2006-01-02 15:04:05 -0700"
+	padding             = "0000"
 )
 
 func (p *textPlistGenerator) generateDocument(pval *plistValue) {
@@ -29,17 +29,22 @@ func plistQuotedString(str string) string {
 		if r > 0xFF {
 			quot = true
 			s += `\U`
-			s += strconv.FormatInt(int64(r), 16)
+			us := strconv.FormatInt(int64(r), 16)
+			s += padding[len(us):]
+			s += us
 		} else if r > 0x7F {
 			quot = true
 			s += `\`
-			s += strconv.FormatInt(int64(r), 8)
+			us := strconv.FormatInt(int64(r), 8)
+			s += padding[1+len(us):]
+			s += us
 		} else {
-			if quoteRequired(uint8(r)) {
+			c := uint8(r)
+			if quotable[c/64]&(1<<(c%64)) > 0 {
 				quot = true
 			}
 
-			switch uint8(r) {
+			switch c {
 			case '\a':
 				s += `\a`
 			case '\b':
@@ -55,7 +60,7 @@ func plistQuotedString(str string) string {
 			case '\t', '\r', '\n':
 				fallthrough
 			default:
-				s += string(r)
+				s += string(c)
 			}
 		}
 	}
@@ -112,7 +117,7 @@ func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 		hex.Encode(hexencoded, b)
 		io.WriteString(p.writer, `<`+string(hexencoded)+`>`)
 	case Date:
-		io.WriteString(p.writer, pval.value.(time.Time).In(time.UTC).Format(textPlistTimeLayout))
+		io.WriteString(p.writer, plistQuotedString(pval.value.(time.Time).In(time.UTC).Format(textPlistTimeLayout)))
 	}
 }
 
@@ -120,6 +125,7 @@ type readPeeker interface {
 	io.Reader
 	io.ByteScanner
 	Peek(n int) ([]byte, error)
+	ReadBytes(delim byte) ([]byte, error)
 }
 
 type textPlistParser struct {
@@ -130,56 +136,71 @@ func (p *textPlistParser) parseDocument() *plistValue {
 	return p.parsePlistValue()
 }
 
+func (p *textPlistParser) chugWhitespace() {
+	for {
+		c, err := p.reader.ReadByte()
+		if err != nil && err != io.EOF {
+			panic(err)
+		}
+		if whitespace[c/64]&(1<<(c%64)) == 0 {
+			p.reader.UnreadByte()
+			break
+		}
+	}
+}
+
 func (p *textPlistParser) parseQuotedString() *plistValue {
+	escaping := false
 	s := ""
 	for {
 		byt, err := p.reader.ReadByte()
+		// EOF here is an error: we're inside a quoted string!
 		if err != nil {
-			if err == io.EOF {
-				break
-			}
 			panic(err)
 		}
 		c := rune(byt)
-		fmt.Println("read", c)
-		if c == '"' {
-			break
-		} else if c == '\\' {
-			byt, err = p.reader.ReadByte()
-			if err != nil {
-				panic(err)
+		if !escaping {
+			if c == '"' {
+				break
+			} else if c == '\\' {
+				escaping = true
+				continue
 			}
-			switch byt {
-			case 'a':
+		} else {
+			escaping = false
+			// Everything that is not listed here passes through unharmed.
+			switch {
+			case c == 'a':
 				c = '\a'
-			case 'b':
+			case c == 'b':
 				c = '\b'
-			case 'v':
+			case c == 'v':
 				c = '\v'
-			case 'f':
+			case c == 'f':
 				c = '\f'
-			case '\\':
-				c = '\\'
-			case '"':
-				c = '"'
-			case 't':
+			case c == 't':
 				c = '\t'
-			case 'r':
+			case c == 'r':
 				c = '\r'
-			case 'n':
+			case c == 'n':
 				c = '\n'
-			case 'x':
-				hex := make([]byte, 2)
+			case c == 'x', c == 'u', c == 'U': // hex and unicode
+				l := 4
+				if c == 'x' {
+					l = 2
+				}
+				hex := make([]byte, l)
 				p.reader.Read(hex)
 				newc, err := strconv.ParseInt(string(hex), 16, 16)
 				if err != nil && err != io.EOF {
 					panic(err)
 				}
 				c = rune(newc)
-			case 'u', 'U':
-				hex := make([]byte, 4)
-				p.reader.Read(hex)
-				newc, err := strconv.ParseInt(string(hex), 16, 16)
+			case '0' <= c && c <= '7': // octal!
+				oct := make([]byte, 3)
+				oct[0] = uint8(c)
+				p.reader.Read(oct[1:])
+				newc, err := strconv.ParseInt(string(oct), 8, 16)
 				if err != nil && err != io.EOF {
 					panic(err)
 				}
@@ -188,7 +209,6 @@ func (p *textPlistParser) parseQuotedString() *plistValue {
 		}
 		s += string(c)
 	}
-	fmt.Println("GOT QUOTED STRING", s)
 	return &plistValue{String, s}
 }
 
@@ -202,30 +222,33 @@ func (p *textPlistParser) parseUnquotedString() *plistValue {
 			}
 			panic(err)
 		}
+		// if we encounter a character that must be quoted, we're done.
 		if quotable[c/64]&(1<<(c%64)) > 0 {
 			p.reader.UnreadByte()
 			break
 		}
 		s += string(c)
 	}
-	fmt.Println("GOT UNQUOTED STRING", s)
 	return &plistValue{String, s}
 }
 
 func (p *textPlistParser) parseDictionary() *plistValue {
+	var keypv *plistValue
 	subval := make(map[string]*plistValue)
 	for {
-		buf, err := p.reader.Peek(1)
+		p.chugWhitespace()
+
+		c, err := p.reader.ReadByte()
 		if err != nil {
 			panic(err)
 		}
-		c := buf[0]
 
-		var keypv *plistValue
-		if c == '"' {
-			p.reader.ReadByte() // read and discard opening quote
+		if c == '}' {
+			break
+		} else if c == '"' {
 			keypv = p.parseQuotedString()
 		} else {
+			p.reader.UnreadByte() // Whoops, ate part of the string
 			keypv = p.parseUnquotedString()
 		}
 		if keypv == nil || keypv.value.(string) == "" {
@@ -233,6 +256,7 @@ func (p *textPlistParser) parseDictionary() *plistValue {
 			panic(errors.New("plist: missing dictionary key"))
 		}
 
+		p.chugWhitespace()
 		c, err = p.reader.ReadByte()
 		if err != nil {
 			panic(err)
@@ -242,8 +266,10 @@ func (p *textPlistParser) parseDictionary() *plistValue {
 			panic(errors.New("plist: missing = in dictionary"))
 		}
 
+		// whitespace is guzzled within
 		val := p.parsePlistValue()
 
+		p.chugWhitespace()
 		c, err = p.reader.ReadByte()
 		if err != nil {
 			panic(err)
@@ -254,17 +280,6 @@ func (p *textPlistParser) parseDictionary() *plistValue {
 		}
 
 		subval[keypv.value.(string)] = val
-
-		buf, err = p.reader.Peek(1)
-		if err != nil {
-			panic(err)
-		}
-		c = buf[0]
-		if c == '}' {
-			p.reader.ReadByte()
-			break
-		}
-
 	}
 	return &plistValue{Dictionary, &dictionary{m: subval}}
 }
@@ -272,23 +287,18 @@ func (p *textPlistParser) parseDictionary() *plistValue {
 func (p *textPlistParser) parseArray() *plistValue {
 	subval := make([]*plistValue, 0, 10)
 	for {
-		buf, err := p.reader.Peek(1)
-		fmt.Println(buf)
+		c, err := p.reader.ReadByte()
 		if err != nil {
 			panic(err)
 		}
-		c := buf[0]
 
-		if c == ',' {
-			p.reader.ReadByte()
+		if c == ')' {
+			break
+		} else if c == ',' {
 			continue
 		}
 
-		if c == ')' {
-			p.reader.ReadByte()
-			break
-		}
-
+		p.reader.UnreadByte()
 		subval = append(subval, p.parsePlistValue())
 	}
 	return &plistValue{Array, subval}
@@ -296,23 +306,24 @@ func (p *textPlistParser) parseArray() *plistValue {
 
 func (p *textPlistParser) parsePlistValue() *plistValue {
 	for {
+		p.chugWhitespace()
+
 		c, err := p.reader.ReadByte()
 		if err != nil && err != io.EOF {
 			panic(err)
 		}
 		switch {
-		// chug whitespace
-		case whitespace[c/64]&(1<<(c%64)) > 0:
-			continue
 		case c == '<':
-			for {
-				x, _ := p.reader.ReadByte()
-				if x == '>' {
-					break
-				}
+			bytes, err := p.reader.ReadBytes('>')
+			if err != nil {
+				panic(err)
 			}
-			return &plistValue{Data, []byte{}}
-			//return p.parseData()
+			bytes = bytes[:len(bytes)-1]
+			data, err := hex.DecodeString(string(bytes))
+			if err != nil {
+				panic(err)
+			}
+			return &plistValue{Data, data}
 		case c == '"':
 			return p.parseQuotedString()
 		case c == '{':
