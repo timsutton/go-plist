@@ -36,12 +36,7 @@ func TestEncode(t *testing.T) {
 		bencoder := NewBinaryEncoder(bbuf)
 		bencoder.Encode(test.Data)
 
-		obuf := &bytes.Buffer{}
-		oencoder := NewOpenStepEncoder(obuf)
-		oencoder.Encode(test.Data)
-
 		t.Logf("Testing Encode (%s)", test.Name)
-		//t.Log(obuf.String())
 
 		if test.ShouldFail && err == nil {
 			failed = true
