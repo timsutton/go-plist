@@ -209,7 +209,7 @@ func TestOSDecode(t *testing.T) {
 		t.Log("I:", osbuf.String())
 		rbuf := bytes.NewReader(osbuf.Bytes())
 		pars := newTextPlistParser(rbuf)
-		pval := pars.parseDocument()
+		pval, _ := pars.parseDocument()
 		var dat interface{}
 		(&Decoder{}).unmarshal(pval, reflect.ValueOf(&dat))
 		t.Log("O:", dat)

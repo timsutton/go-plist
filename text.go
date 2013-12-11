@@ -131,8 +131,8 @@ type textPlistParser struct {
 	reader byteReader
 }
 
-func (p *textPlistParser) parseDocument() *plistValue {
-	return p.parsePlistValue()
+func (p *textPlistParser) parseDocument() (*plistValue, error) {
+	return p.parsePlistValue(), nil
 }
 
 func (p *textPlistParser) chugWhitespace() {
