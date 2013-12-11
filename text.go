@@ -121,15 +121,14 @@ func (p *textPlistGenerator) writePlistValue(pval *plistValue) {
 	}
 }
 
-type readPeeker interface {
+type byteReader interface {
 	io.Reader
 	io.ByteScanner
-	Peek(n int) ([]byte, error)
 	ReadBytes(delim byte) ([]byte, error)
 }
 
 type textPlistParser struct {
-	reader readPeeker
+	reader byteReader
 }
 
 func (p *textPlistParser) parseDocument() *plistValue {
@@ -239,6 +238,7 @@ func (p *textPlistParser) parseDictionary() *plistValue {
 		p.chugWhitespace()
 
 		c, err := p.reader.ReadByte()
+		// EOF here is an error: we're inside a dictionary!
 		if err != nil {
 			panic(err)
 		}
@@ -288,6 +288,7 @@ func (p *textPlistParser) parseArray() *plistValue {
 	subval := make([]*plistValue, 0, 10)
 	for {
 		c, err := p.reader.ReadByte()
+		// EOF here is an error: we're inside an array!
 		if err != nil {
 			panic(err)
 		}
@@ -339,8 +340,8 @@ func (p *textPlistParser) parsePlistValue() *plistValue {
 }
 
 func newTextPlistParser(r io.Reader) *textPlistParser {
-	var reader readPeeker
-	if rd, ok := r.(readPeeker); ok {
+	var reader byteReader
+	if rd, ok := r.(byteReader); ok {
 		reader = rd
 	} else {
 		reader = bufio.NewReader(r)
