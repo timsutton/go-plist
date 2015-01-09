@@ -265,9 +265,6 @@ func (p *xmlPlistParser) parseXMLElement(element xml.StartElement) *plistValue {
 				if el.Name.Local == "key" {
 					p.xmlDecoder.DecodeElement(&key, &el)
 				} else {
-					if key == "" {
-						panic(errors.New("missing key in dictionary"))
-					}
 					subvalues[key] = p.parseXMLElement(el)
 					key = ""
 				}
